@@ -10,6 +10,7 @@ import {
 import AddEventForm from "@/components/AddEventForm";
 import PresetTemplateManager from "@/components/PresetTemplateManager";
 import TimelineItem from "@/components/TimelineItem";
+import { useAuth } from "@/contexts/AuthContext";
 import { Settings } from "lucide-react";
 import {
   format,
@@ -66,15 +67,30 @@ function getTemplateStartDate(tpl: PresetTemplate) {
 }
 
 export default function Home() {
+  const {
+    user,
+    signIn,
+    signOut,
+    syncEvents,
+    syncTemplates,
+    syncDisplaySettings,
+    loadUserData,
+  } = useAuth();
   const [events, setEvents] = useState<TimelineEvent[]>([]);
   const [presetTemplates, setPresetTemplates] = useState<PresetTemplate[]>([]);
-  const [timelineFutureCount, setTimelineFutureCount] = useState<number>(() => {
-    if (typeof window !== "undefined") {
+  const [timelineFutureCount, setTimelineFutureCount] = useState<number>(1);
+  const [isInitialized, setIsInitialized] = useState(false);
+
+  // 在客戶端載入時設置初始值
+  useEffect(() => {
+    if (typeof window !== "undefined" && !isInitialized) {
       const saved = localStorage.getItem("timeline-future-count");
-      return saved ? Number(saved) : 1;
+      if (saved) {
+        setTimelineFutureCount(Number(saved));
+      }
+      setIsInitialized(true);
     }
-    return 1;
-  });
+  }, [isInitialized]);
   const [showModal, setShowModal] = useState(false);
   const [editingEvent, setEditingEvent] = useState<TimelineEvent | null>(null);
   const [editingTemplateId, setEditingTemplateId] = useState<string | null>(
@@ -83,34 +99,173 @@ export default function Home() {
   const [appVersion, setAppVersion] = useState<string>("0.1.0");
   const [commits, setCommits] = useState<any[]>([]);
   const [showCommits, setShowCommits] = useState(false);
-  // 載入 localStorage
+  const [lastSyncTime, setLastSyncTime] = useState<string | undefined>();
+  const [isOnline, setIsOnline] = useState(true);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncSuccess, setSyncSuccess] = useState(false);
+  const [syncDisabled, setSyncDisabled] = useState(false);
+  // 监听在线状态
   useEffect(() => {
-    const savedAllEvents = localStorage.getItem("all-timeline-events");
-    if (savedAllEvents) {
-      try {
-        const allEvents = JSON.parse(savedAllEvents);
-        // 分離出自動產生的事件和手動添加的事件
-        const manualEvents = allEvents.filter(
-          (event: TimelineEvent) => !event.id.startsWith("auto-")
-        );
-        setEvents(manualEvents);
-      } catch (error) {
-        console.error("載入事件數據失敗:", error);
-      }
-    } else {
-      // 如果沒有 all-timeline-events，嘗試載入舊的 timeline-events
-      const savedEvents = localStorage.getItem("timeline-events");
-      if (savedEvents) {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, []);
+
+  // 处理同步成功状态和一分钟禁用
+  useEffect(() => {
+    if (syncSuccess) {
+      // 3秒后清除成功状态
+      const successTimer = setTimeout(() => {
+        setSyncSuccess(false);
+      }, 3000);
+
+      // 一分钟内禁用同步按钮
+      setSyncDisabled(true);
+      const disableTimer = setTimeout(() => {
+        setSyncDisabled(false);
+      }, 60000); // 60秒
+
+      return () => {
+        clearTimeout(successTimer);
+        clearTimeout(disableTimer);
+      };
+    }
+  }, [syncSuccess]);
+
+  // 載入數據
+  useEffect(() => {
+    const loadData = async () => {
+      if (user) {
+        // 用戶已登入，優先從雲端載入資料
         try {
-          setEvents(JSON.parse(savedEvents));
+          const {
+            events: cloudEvents,
+            templates: cloudTemplates,
+            displaySettings: cloudDisplaySettings,
+          } = await loadUserData();
+
+          let hasCloudData = false;
+
+          if (cloudEvents.length > 0) {
+            setEvents(cloudEvents);
+            console.log("從雲端載入事件資料成功");
+            hasCloudData = true;
+          } else {
+            console.log("雲端沒有事件資料");
+          }
+
+          if (cloudTemplates.length > 0) {
+            setPresetTemplates(cloudTemplates);
+            console.log("從雲端載入模板資料成功");
+            hasCloudData = true;
+          } else {
+            console.log("雲端沒有模板資料");
+          }
+
+          // 載入顯示設定
+          if (
+            cloudDisplaySettings &&
+            Object.keys(cloudDisplaySettings).length > 0
+          ) {
+            if (cloudDisplaySettings.timelineFutureCount) {
+              // 只有在本地没有设置时才从云端加载
+              const localCount = localStorage.getItem("timeline-future-count");
+              if (!localCount) {
+                setTimelineFutureCount(
+                  cloudDisplaySettings.timelineFutureCount
+                );
+                console.log("從雲端載入顯示設定成功");
+              } else {
+                console.log("本地已有顯示設定，使用本地設定");
+              }
+              hasCloudData = true;
+            }
+          } else {
+            console.log("雲端沒有顯示設定，使用預設值");
+          }
+
+          // 如果雲端有任何資料，更新最後同步時間
+          if (hasCloudData) {
+            setLastSyncTime(new Date().toISOString());
+            console.log("✅ 雲端載入完成，已更新同步時間");
+          } else {
+            console.log("雲端完全沒有資料，嘗試從本地載入");
+            loadFromLocalStorage();
+          }
+        } catch (error) {
+          console.error("從雲端載入資料失敗:", error);
+          // 如果雲端載入失敗，回退到本地儲存
+          loadFromLocalStorage();
+        }
+      } else {
+        // 用戶未登入，從本地儲存載入資料
+        loadFromLocalStorage();
+      }
+    };
+
+    const loadFromLocalStorage = () => {
+      const savedAllEvents = localStorage.getItem("all-timeline-events");
+      if (savedAllEvents) {
+        try {
+          const allEvents = JSON.parse(savedAllEvents);
+          // 分離出自動產生的事件和手動添加的事件
+          const manualEvents = allEvents.filter(
+            (event: TimelineEvent) => !event.id.startsWith("auto-")
+          );
+          setEvents(manualEvents);
         } catch (error) {
           console.error("載入事件數據失敗:", error);
         }
+      } else {
+        // 如果沒有 all-timeline-events，嘗試載入舊的 timeline-events
+        const savedEvents = localStorage.getItem("timeline-events");
+        if (savedEvents) {
+          try {
+            setEvents(JSON.parse(savedEvents));
+          } catch (error) {
+            console.error("載入事件數據失敗:", error);
+          }
+        }
       }
-    }
 
-    // 載入預設模板
-    const savedTemplates = localStorage.getItem("preset-templates");
+      // 載入預設模板
+      const savedTemplates = localStorage.getItem("preset-templates");
+      if (savedTemplates) {
+        try {
+          const parsedTemplates = JSON.parse(savedTemplates);
+          console.log("載入預設模板:", parsedTemplates);
+          if (parsedTemplates && parsedTemplates.length > 0) {
+            setPresetTemplates(parsedTemplates);
+          }
+        } catch (error) {
+          console.error("載入模板數據失敗:", error);
+        }
+      } else {
+        console.log("沒有找到保存的預設模板");
+      }
+
+      // 載入時間軸未來事件數量設定
+      const savedTimelineFutureCount = localStorage.getItem(
+        "timeline-future-count"
+      );
+      if (savedTimelineFutureCount) {
+        const count = Number(savedTimelineFutureCount);
+        console.log("載入時間軸未來事件數量:", count);
+        // 只有在还没有初始化时才设置
+        if (!isInitialized) {
+          setTimelineFutureCount(count);
+        }
+      } else {
+        console.log("沒有找到保存的時間軸未來事件數量設定，使用預設值 1");
+      }
+    };
 
     // 獲取應用版本
     const fetchVersion = async () => {
@@ -136,32 +291,9 @@ export default function Home() {
       }
     };
     fetchCommits();
-    if (savedTemplates) {
-      try {
-        const parsedTemplates = JSON.parse(savedTemplates);
-        console.log("載入預設模板:", parsedTemplates);
-        if (parsedTemplates && parsedTemplates.length > 0) {
-          setPresetTemplates(parsedTemplates);
-        }
-      } catch (error) {
-        console.error("載入模板數據失敗:", error);
-      }
-    } else {
-      console.log("沒有找到保存的預設模板");
-    }
 
-    // 載入時間軸未來事件數量設定
-    const savedTimelineFutureCount = localStorage.getItem(
-      "timeline-future-count"
-    );
-    if (savedTimelineFutureCount) {
-      const count = Number(savedTimelineFutureCount);
-      console.log("載入時間軸未來事件數量:", count);
-      setTimelineFutureCount(count);
-    } else {
-      console.log("沒有找到保存的時間軸未來事件數量設定，使用預設值 1");
-    }
-  }, []);
+    loadData();
+  }, [user, loadUserData]);
 
   // 清理過期14天的事件
   useEffect(() => {
@@ -195,22 +327,50 @@ export default function Home() {
     });
   }, []); // 只在組件掛載時執行一次
 
-  // 保存預設模板到 localStorage
+  // 保存預設模板
   useEffect(() => {
     console.log("保存預設模板:", presetTemplates);
     if (presetTemplates.length > 0) {
       localStorage.setItem("preset-templates", JSON.stringify(presetTemplates));
+
+      // 如果用戶已登入，同步到雲端
+      if (user) {
+        syncTemplates(presetTemplates)
+          .then(() => {
+            setLastSyncTime(new Date().toISOString());
+          })
+          .catch((error) => {
+            console.error("同步模板到雲端失敗:", error);
+          });
+      }
     }
-  }, [presetTemplates]);
+  }, [presetTemplates, user, syncTemplates]);
 
   // 保存時間軸未來事件數量設定到 localStorage
   useEffect(() => {
-    localStorage.setItem(
-      "timeline-future-count",
-      timelineFutureCount.toString()
-    );
-    console.log("保存時間軸未來事件數量:", timelineFutureCount);
-  }, [timelineFutureCount]);
+    // 只有在已初始化且值不为默认值时才保存
+    if (isInitialized && timelineFutureCount !== 1) {
+      localStorage.setItem(
+        "timeline-future-count",
+        timelineFutureCount.toString()
+      );
+      console.log("保存時間軸未來事件數量:", timelineFutureCount);
+
+      // 如果用戶已登入，同步顯示設定到雲端
+      if (user) {
+        const displaySettings = {
+          timelineFutureCount: timelineFutureCount,
+        };
+        syncDisplaySettings(displaySettings)
+          .then(() => {
+            console.log("顯示設定已同步到雲端");
+          })
+          .catch((error) => {
+            console.error("同步顯示設定到雲端失敗:", error);
+          });
+      }
+    }
+  }, [timelineFutureCount, user, syncDisplaySettings, isInitialized]);
 
   const addEvent = (formData: AddEventFormData) => {
     const newEvent: TimelineEvent = {
@@ -224,12 +384,42 @@ export default function Home() {
       color: formData.color || undefined,
       createdAt: new Date().toISOString(),
     };
-    setEvents((prev) => [...prev, newEvent]);
+    setEvents((prev) => {
+      const updatedEvents = [...prev, newEvent];
+
+      // 如果用戶已登入，同步到雲端
+      if (user) {
+        syncEvents(updatedEvents)
+          .then(() => {
+            setLastSyncTime(new Date().toISOString());
+          })
+          .catch((error) => {
+            console.error("同步事件到雲端失敗:", error);
+          });
+      }
+
+      return updatedEvents;
+    });
   };
 
   const deleteEvent = (id: string) => {
     if (confirm("確定要刪除這個事件嗎？")) {
-      setEvents((prev) => prev.filter((event) => event.id !== id));
+      setEvents((prev) => {
+        const updatedEvents = prev.filter((event) => event.id !== id);
+
+        // 如果用戶已登入，同步到雲端
+        if (user) {
+          syncEvents(updatedEvents)
+            .then(() => {
+              setLastSyncTime(new Date().toISOString());
+            })
+            .catch((error) => {
+              console.error("同步事件到雲端失敗:", error);
+            });
+        }
+
+        return updatedEvents;
+      });
     }
   };
 
@@ -255,9 +445,24 @@ export default function Home() {
   };
 
   const updateEvent = (updatedEvent: TimelineEvent) => {
-    setEvents((prev) =>
-      prev.map((event) => (event.id === updatedEvent.id ? updatedEvent : event))
-    );
+    setEvents((prev) => {
+      const updatedEvents = prev.map((event) =>
+        event.id === updatedEvent.id ? updatedEvent : event
+      );
+
+      // 如果用戶已登入，同步到雲端
+      if (user) {
+        syncEvents(updatedEvents)
+          .then(() => {
+            setLastSyncTime(new Date().toISOString());
+          })
+          .catch((error) => {
+            console.error("同步事件到雲端失敗:", error);
+          });
+      }
+
+      return updatedEvents;
+    });
     setEditingEvent(null);
     setShowModal(false);
   };
@@ -543,6 +748,151 @@ export default function Home() {
                   >
                     ×
                   </button>
+                </div>
+
+                {/* 帳號設置 */}
+                <div className="mb-8">
+                  <h3 className="text-xl font-semibold text-gray-300 mb-4 flex items-center gap-2">
+                    <span>👤</span>
+                    帳號
+                  </h3>
+
+                  <div className="bg-dark-700 p-4 rounded-lg">
+                    {/* 登入狀態 */}
+                    <div className="mb-4">
+                      <h4 className="text-lg font-medium text-gray-300 mb-3">
+                        登入狀態
+                      </h4>
+                      {user ? (
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                            {user.photoURL ? (
+                              <img
+                                src={user.photoURL}
+                                alt={user.displayName || "用戶"}
+                                className="w-10 h-10 rounded-full"
+                              />
+                            ) : (
+                              <div className="w-10 h-10 bg-gray-600 rounded-full flex items-center justify-center">
+                                <span className="text-gray-400 text-lg">
+                                  👤
+                                </span>
+                              </div>
+                            )}
+                            <div>
+                              <div className="text-gray-200 font-medium">
+                                {user.displayName || user.email}
+                              </div>
+                              <div className="text-sm text-gray-400">
+                                {user.email}
+                              </div>
+                            </div>
+                          </div>
+                          <button
+                            onClick={signOut}
+                            className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors"
+                          >
+                            <span>🚪</span>
+                            登出
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-between">
+                          <div className="text-gray-400">未登入</div>
+                          <button
+                            onClick={signIn}
+                            className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors"
+                          >
+                            <span>🔑</span>
+                            使用 Google 登入
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* 同步狀態 */}
+                    {user && (
+                      <div>
+                        <h4 className="text-lg font-medium text-gray-300 mb-3">
+                          資料同步
+                        </h4>
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                            <div
+                              className={`w-3 h-3 rounded-full ${
+                                isOnline ? "bg-green-400" : "bg-red-400"
+                              }`}
+                            ></div>
+                            <div>
+                              <div className="text-gray-200">
+                                {isOnline ? "線上" : "離線"}
+                              </div>
+                              <div className="text-sm text-gray-400">
+                                {lastSyncTime
+                                  ? `最後同步: ${new Date(
+                                      lastSyncTime
+                                    ).toLocaleString("zh-TW", {
+                                      year: "numeric",
+                                      month: "2-digit",
+                                      day: "2-digit",
+                                      hour: "2-digit",
+                                      minute: "2-digit",
+                                    })}`
+                                  : "尚未同步"}
+                              </div>
+                            </div>
+                          </div>
+                          <button
+                            onClick={async () => {
+                              if (isSyncing || syncDisabled) return;
+                              if (!user) {
+                                alert("請先登入後再進行同步");
+                                return;
+                              }
+                              setIsSyncing(true);
+                              try {
+                                const displaySettings = {
+                                  timelineFutureCount: timelineFutureCount,
+                                };
+                                await Promise.all([
+                                  syncEvents(events),
+                                  syncTemplates(presetTemplates),
+                                  syncDisplaySettings(displaySettings),
+                                ]);
+                                // 更新最後同步時間
+                                setLastSyncTime(new Date().toISOString());
+                                setSyncSuccess(true);
+                              } catch (error) {
+                                console.error("同步失敗:", error);
+                                alert("同步失敗，請檢查網路連接或稍後再試");
+                              } finally {
+                                setIsSyncing(false);
+                              }
+                            }}
+                            disabled={!isOnline || isSyncing || syncDisabled}
+                            className={`px-4 py-2 rounded-lg flex items-center gap-2 transition-colors ${
+                              syncSuccess
+                                ? "bg-green-600 text-white"
+                                : isOnline && !isSyncing && !syncDisabled
+                                ? "bg-blue-600 hover:bg-blue-700 text-white"
+                                : "bg-gray-600 text-gray-400 cursor-not-allowed"
+                            }`}
+                          >
+                            <span className={isSyncing ? "animate-spin" : ""}>
+                              {syncSuccess ? "✅" : "🔄"}
+                            </span>
+                            {syncSuccess
+                              ? "已同步至最新！"
+                              : isSyncing
+                              ? "同步中..."
+                              : syncDisabled
+                              ? "已同步至最新！"
+                              : "立即同步"}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 {/* 自訂模板管理 */}

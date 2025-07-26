@@ -6,7 +6,6 @@
 
 ## 功能特色
 
-- 🎨 **深色主題 + 螢光色系**：現代化的視覺設計
 - 📅 **智能時間軸**：雙時間軸設計，過去事件和當前/未來事件分離顯示
 - ⏱️ **當前時間指示器**：實時顯示當前時間位置
 - 📝 **事件管理**：添加、編輯、刪除、排序事件
@@ -14,16 +13,19 @@
 - 🔄 **自動重複事件**：支持按小時、天、週、月重複的事件
 - 🎨 **自訂顏色系統**：支持預設顏色和自訂顏色選擇
 - 📊 **事件狀態顯示**：進行中事件高亮顯示
-- 💾 **本地存儲**：數據保存在瀏覽器本地
+- 🔐 **Google 登錄**：使用 Firebase Authentication 進行用戶認證
+- ☁️ **雲端同步**：登錄後數據自動同步到 Firebase Firestore
+- 📱 **多設備同步**：可在不同設備間同步數據
+- 💾 **本地存儲**：離線時數據保存在瀏覽器本地
 - 📱 **響應式設計**：支持桌面和移動設備
-- 🔗 **GitHub 整合**：顯示最近的 commit 記錄
-- 🗑️ **自動清理**：自動清理過期 7 天的事件
+- 🗑️ **自動清理**：自動清理過期 14 天的事件
 
 ## 技術棧
 
 - **Next.js 14** - React 框架
 - **TypeScript** - 類型安全
 - **Tailwind CSS** - 樣式框架
+- **Firebase** - 認證、數據庫和分析
 - **date-fns** - 日期處理
 - **Lucide React** - 圖標庫
 
@@ -34,18 +36,47 @@
 npm install
 ```
 
-2. 啟動開發服務器：
+2. 設置 Firebase（詳見 [FIREBASE_SETUP.md](./FIREBASE_SETUP.md)）：
+   - 創建 Firebase 項目
+   - 啟用 Authentication、Firestore 和 Analytics
+   - 在專案根目錄建立 `.env.local`，內容如下：
+
+```env
+NEXT_PUBLIC_FIREBASE_API_KEY=你的API_KEY
+NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=你的AUTH_DOMAIN
+NEXT_PUBLIC_FIREBASE_DATABASE_URL=你的DATABASE_URL
+NEXT_PUBLIC_FIREBASE_PROJECT_ID=你的PROJECT_ID
+NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=你的STORAGE_BUCKET
+NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=你的MESSAGING_SENDER_ID
+NEXT_PUBLIC_FIREBASE_APP_ID=你的APP_ID
+NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID=你的MEASUREMENT_ID
+```
+
+3. 啟動開發服務器：
 ```bash
 npm run dev
 ```
 
-3. 打開瀏覽器訪問 [http://localhost:3000](http://localhost:3000)
+4. 打開瀏覽器訪問 [http://localhost:3000](http://localhost:3000)
 
-## 部署到 Vercel
+5. 測試 Firebase 配置：訪問 [http://localhost:3000/test-firebase](http://localhost:3000/test-firebase)
 
-1. 將代碼推送到 GitHub
-2. 在 Vercel 中導入項目
-3. 自動部署完成
+## 部署到 Firebase Hosting
+
+1. 安裝 Firebase CLI：
+```bash
+npm install -g firebase-tools
+```
+
+2. 登錄 Firebase：
+```bash
+firebase login
+```
+
+3. 部署到 Firebase Hosting：
+```bash
+npm run deploy
+```
 
 ## 使用說明
 
@@ -66,7 +97,15 @@ npm run dev
 - **雙時間軸**：過去事件顯示在左側（縮小、半透明）
 - **當前時間**：綠色指示器顯示當前時間位置
 - **進行中事件**：正在進行的事件會顯示綠色邊框和「進行中」標籤
-- **自動清理**：過期 7 天的事件會自動刪除
+- **自動清理**：過期 14 天的事件會自動刪除
+
+### 雲端同步
+- **Google 登錄**：點擊左上角的登錄按鈕使用 Google 賬戶登錄
+- **自動同步**：登錄後，所有數據會自動同步到雲端
+- **智能同步控制**：同步成功後顯示"已同步至最新！"，一分鐘內防止重複操作
+- **多設備同步**：在不同設備上登錄相同賬戶可訪問相同數據
+- **離線支持**：離線時數據保存在本地，聯網後自動同步
+- **同步狀態**：左下角顯示同步狀態和最後同步時間
 
 ### 顏色系統
 - **預設顏色**：藍色、綠色、紫色、橙色、紅色、粉色、黃色
@@ -81,17 +120,25 @@ timmer/
 │   ├── api/               # API 路由
 │   │   ├── version/       # 版本 API
 │   │   └── github/        # GitHub API
+│   ├── test-firebase/     # Firebase 測試頁面
 │   ├── globals.css        # 全局樣式
 │   ├── layout.tsx         # 根佈局
 │   └── page.tsx           # 主頁面
 ├── components/            # React 組件
 │   ├── AddEventForm.tsx   # 添加/編輯事件表單
+│   ├── LoginButton.tsx    # 登錄按鈕
 │   ├── PresetTemplateManager.tsx # 預設模板管理
+│   ├── SyncStatus.tsx     # 同步狀態指示器
 │   └── TimelineItem.tsx   # 時間軸項目
+├── contexts/              # React Context
+│   └── AuthContext.tsx    # 認證上下文
+├── lib/                   # 工具庫
+│   └── firebase.ts        # Firebase 配置
 ├── types/                 # TypeScript 類型定義
 │   └── timeline.ts        # 時間軸相關類型
 ├── package.json           # 項目依賴
 ├── tailwind.config.js     # Tailwind 配置
+├── FIREBASE_SETUP.md      # Firebase 設置指南
 └── vercel.json           # Vercel 部署配置
 ```
 
@@ -119,12 +166,19 @@ timmer/
 - **版本信息**：動態讀取 package.json 版本號
 - **直接鏈接**：可點擊跳轉到 GitHub 查看詳細信息
 
+### 同步功能詳解
+- **即時反饋**：同步成功立即顯示綠色成功狀態和"已同步至最新！"提示
+- **防重複操作**：同步成功後一分鐘內按鈕保持禁用狀態，防止頻繁請求
+- **狀態管理**：自動處理同步中、成功、失敗等不同狀態的視覺反饋
+- **離線檢測**：實時監控網絡狀態，離線時顯示相應提示
+
 ## 自定義
 
 - 修改 `tailwind.config.js` 中的顏色配置
 - 調整 `app/globals.css` 中的樣式
 - 在 `components/` 中添加新組件
 - 修改 `app/api/` 中的 API 路由
+- 調整 `lib/firebase.ts` 中的 Firebase 配置
 
 ## 許可證
 
