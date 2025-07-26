@@ -104,6 +104,14 @@ export default function Home() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncSuccess, setSyncSuccess] = useState(false);
   const [syncDisabled, setSyncDisabled] = useState(false);
+  const [showDataChoiceModal, setShowDataChoiceModal] = useState(false);
+  const [dataChoiceInfo, setDataChoiceInfo] = useState<{
+    cloudEvents: TimelineEvent[];
+    cloudTemplates: PresetTemplate[];
+    localEvents: TimelineEvent[];
+    localTemplates: PresetTemplate[];
+    hasConflict: boolean;
+  } | null>(null);
   // 监听在线状态
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
@@ -151,53 +159,185 @@ export default function Home() {
             displaySettings: cloudDisplaySettings,
           } = await loadUserData();
 
-          let hasCloudData = false;
+          console.log("🔍 雲端數據檢查:", {
+            eventsCount: cloudEvents.length,
+            templatesCount: cloudTemplates.length,
+            hasDisplaySettings: Object.keys(cloudDisplaySettings).length > 0,
+            userId: user.uid,
+            userEmail: user.email,
+          });
 
-          if (cloudEvents.length > 0) {
-            setEvents(cloudEvents);
-            console.log("從雲端載入事件資料成功");
-            hasCloudData = true;
-          } else {
-            console.log("雲端沒有事件資料");
-          }
+          // 檢查本地數據
+          const localEvents = localStorage.getItem("all-timeline-events");
+          const localTemplates = localStorage.getItem("preset-templates");
+          const localCount = localStorage.getItem("timeline-future-count");
 
-          if (cloudTemplates.length > 0) {
-            setPresetTemplates(cloudTemplates);
-            console.log("從雲端載入模板資料成功");
-            hasCloudData = true;
-          } else {
-            console.log("雲端沒有模板資料");
-          }
+          console.log("🔍 本地數據檢查:", {
+            hasLocalEvents: !!localEvents,
+            hasLocalTemplates: !!localTemplates,
+            hasLocalCount: !!localCount,
+          });
 
-          // 載入顯示設定
-          if (
-            cloudDisplaySettings &&
-            Object.keys(cloudDisplaySettings).length > 0
-          ) {
-            if (cloudDisplaySettings.timelineFutureCount) {
-              // 只有在本地没有设置时才从云端加载
-              const localCount = localStorage.getItem("timeline-future-count");
-              if (!localCount) {
+          // 檢查是否有數據衝突
+          const hasLocalData = localEvents || localTemplates;
+          const hasCloudData =
+            cloudEvents.length > 0 || cloudTemplates.length > 0;
+          const hasConflict = hasLocalData && hasCloudData;
+
+          if (hasConflict) {
+            // 解析本地數據
+            let parsedLocalEvents: TimelineEvent[] = [];
+            let parsedLocalTemplates: PresetTemplate[] = [];
+
+            if (localEvents) {
+              try {
+                const allLocalEvents = JSON.parse(localEvents);
+                parsedLocalEvents = allLocalEvents.filter(
+                  (event: TimelineEvent) => !event.id.startsWith("auto-")
+                );
+              } catch (error) {
+                console.error("解析本地事件數據失敗:", error);
+              }
+            }
+
+            if (localTemplates) {
+              try {
+                parsedLocalTemplates = JSON.parse(localTemplates);
+              } catch (error) {
+                console.error("解析本地模板數據失敗:", error);
+              }
+            }
+
+            // 比較本地和雲端數據是否相同
+            const eventsAreEqual =
+              JSON.stringify(
+                parsedLocalEvents.sort((a, b) => a.id.localeCompare(b.id))
+              ) ===
+              JSON.stringify(
+                cloudEvents.sort((a, b) => a.id.localeCompare(b.id))
+              );
+            const templatesAreEqual =
+              JSON.stringify(
+                parsedLocalTemplates.sort((a, b) => a.id.localeCompare(b.id))
+              ) ===
+              JSON.stringify(
+                cloudTemplates.sort((a, b) => a.id.localeCompare(b.id))
+              );
+
+            console.log("🔍 數據比較結果:", {
+              eventsAreEqual,
+              templatesAreEqual,
+              localEventsCount: parsedLocalEvents.length,
+              cloudEventsCount: cloudEvents.length,
+              localTemplatesCount: parsedLocalTemplates.length,
+              cloudTemplatesCount: cloudTemplates.length,
+            });
+
+            // 如果數據完全相同，直接使用雲端數據，不顯示選擇對話框
+            if (eventsAreEqual && templatesAreEqual) {
+              console.log("✅ 本地和雲端數據完全相同，直接使用雲端數據");
+              setEvents(cloudEvents);
+              setPresetTemplates(cloudTemplates);
+              if (cloudDisplaySettings.timelineFutureCount) {
                 setTimelineFutureCount(
                   cloudDisplaySettings.timelineFutureCount
                 );
-                console.log("從雲端載入顯示設定成功");
-              } else {
-                console.log("本地已有顯示設定，使用本地設定");
               }
-              hasCloudData = true;
+              return;
             }
-          } else {
-            console.log("雲端沒有顯示設定，使用預設值");
+
+            // 數據不同，顯示選擇對話框
+            setDataChoiceInfo({
+              cloudEvents: cloudEvents,
+              cloudTemplates: cloudTemplates,
+              localEvents: parsedLocalEvents,
+              localTemplates: parsedLocalTemplates,
+              hasConflict: true,
+            });
+            setShowDataChoiceModal(true);
+            console.log("⚠️ 檢測到數據衝突，等待用戶選擇");
+
+            // 暫時使用雲端數據作為預設，用戶可以通過對話框選擇其他選項
+            setEvents(cloudEvents);
+            setPresetTemplates(cloudTemplates);
+            if (cloudDisplaySettings.timelineFutureCount) {
+              setTimelineFutureCount(cloudDisplaySettings.timelineFutureCount);
+            }
+
+            // 30秒後自動關閉對話框，使用雲端數據
+            setTimeout(() => {
+              if (showDataChoiceModal) {
+                setShowDataChoiceModal(false);
+                setDataChoiceInfo(null);
+                console.log("⏰ 30秒後自動使用雲端數據");
+              }
+            }, 30000);
+
+            return;
           }
 
-          // 如果雲端有任何資料，更新最後同步時間
-          if (hasCloudData) {
+          // 數據合併策略：優先使用雲端數據，如果雲端沒有則使用本地數據
+          let finalEvents = cloudEvents;
+          let finalTemplates = cloudTemplates;
+          let finalDisplaySettings = cloudDisplaySettings;
+
+          // 如果雲端沒有事件數據，但有本地數據，使用本地數據
+          if (cloudEvents.length === 0 && localEvents) {
+            try {
+              const parsedLocalEvents = JSON.parse(localEvents);
+              const manualEvents = parsedLocalEvents.filter(
+                (event: TimelineEvent) => !event.id.startsWith("auto-")
+              );
+              finalEvents = manualEvents;
+              console.log("📱 使用本地事件數據");
+            } catch (error) {
+              console.error("解析本地事件數據失敗:", error);
+            }
+          }
+
+          // 如果雲端沒有模板數據，但有本地數據，使用本地數據
+          if (cloudTemplates.length === 0 && localTemplates) {
+            try {
+              const parsedLocalTemplates = JSON.parse(localTemplates);
+              finalTemplates = parsedLocalTemplates;
+              console.log("📱 使用本地模板數據");
+            } catch (error) {
+              console.error("解析本地模板數據失敗:", error);
+            }
+          }
+
+          // 優先使用本地顯示設定，如果本地沒有則使用雲端設定
+          if (localCount) {
+            finalDisplaySettings = { timelineFutureCount: Number(localCount) };
+            console.log("📱 優先使用本地顯示設定:", Number(localCount));
+          } else if (cloudDisplaySettings.timelineFutureCount) {
+            finalDisplaySettings = {
+              timelineFutureCount: cloudDisplaySettings.timelineFutureCount,
+            };
+            console.log(
+              "☁️ 使用雲端顯示設定:",
+              cloudDisplaySettings.timelineFutureCount
+            );
+          }
+
+          // 設置最終數據
+          setEvents(finalEvents);
+          setPresetTemplates(finalTemplates);
+
+          if (finalDisplaySettings.timelineFutureCount) {
+            setTimelineFutureCount(finalDisplaySettings.timelineFutureCount);
+          }
+
+          // 如果有任何數據，更新同步時間
+          if (
+            finalEvents.length > 0 ||
+            finalTemplates.length > 0 ||
+            finalDisplaySettings.timelineFutureCount
+          ) {
             setLastSyncTime(new Date().toISOString());
-            console.log("✅ 雲端載入完成，已更新同步時間");
+            console.log("✅ 數據載入完成，已更新同步時間");
           } else {
-            console.log("雲端完全沒有資料，嘗試從本地載入");
-            loadFromLocalStorage();
+            console.log("📝 沒有找到任何數據，使用空白狀態");
           }
         } catch (error) {
           console.error("從雲端載入資料失敗:", error);
@@ -338,6 +478,7 @@ export default function Home() {
         syncTemplates(presetTemplates)
           .then(() => {
             setLastSyncTime(new Date().toISOString());
+            console.log("✅ 模板已同步到雲端");
           })
           .catch((error) => {
             console.error("同步模板到雲端失敗:", error);
@@ -346,10 +487,31 @@ export default function Home() {
     }
   }, [presetTemplates, user, syncTemplates]);
 
+  // 保存事件到本地和雲端
+  useEffect(() => {
+    if (events.length > 0) {
+      // 保存到本地儲存
+      localStorage.setItem("all-timeline-events", JSON.stringify(events));
+      console.log("📱 事件已保存到本地");
+
+      // 如果用戶已登入，同步到雲端
+      if (user) {
+        syncEvents(events)
+          .then(() => {
+            setLastSyncTime(new Date().toISOString());
+            console.log("✅ 事件已同步到雲端");
+          })
+          .catch((error) => {
+            console.error("同步事件到雲端失敗:", error);
+          });
+      }
+    }
+  }, [events, user, syncEvents]);
+
   // 保存時間軸未來事件數量設定到 localStorage
   useEffect(() => {
-    // 只有在已初始化且值不为默认值时才保存
-    if (isInitialized && timelineFutureCount !== 1) {
+    // 只有在已初始化时才保存
+    if (isInitialized) {
       localStorage.setItem(
         "timeline-future-count",
         timelineFutureCount.toString()
@@ -734,184 +896,493 @@ export default function Home() {
 
         {/* Modal */}
         {showModal && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-            <div className="bg-dark-800 rounded-lg w-full max-w-4xl max-h-[90vh] overflow-y-auto">
-              <div className="p-6">
-                <div className="flex items-center justify-between mb-6">
-                  <h2 className="text-2xl font-bold text-primary-400">設置</h2>
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-dark-800 rounded-lg p-6 max-w-4xl max-h-[90vh] overflow-y-auto">
+              <div className="flex justify-between items-center mb-6">
+                <h2 className="text-2xl font-bold title-text">
+                  {editingEvent ? "編輯事件" : "設置"}
+                </h2>
+                <button
+                  onClick={() => {
+                    setShowModal(false);
+                    if (editingEvent) {
+                      setEditingEvent(null);
+                    }
+                  }}
+                  className="text-gray-400 hover:text-white"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {editingEvent ? (
+                // 編輯事件表單
+                <div className="space-y-8">
+                  <AddEventForm
+                    onAddEvent={addEvent}
+                    editingEvent={editingEvent}
+                    onUpdateEvent={updateEvent}
+                    onCancelEdit={cancelEdit}
+                  />
+                </div>
+              ) : (
+                // 設置頁面
+                <div className="space-y-8">
+                  {/* 帳號 */}
+                  <div className="mb-8">
+                    <h3 className="text-xl font-semibold text-gray-300 mb-4 flex items-center gap-2">
+                      <span>👤</span>
+                      帳號
+                    </h3>
+
+                    <div className="bg-dark-700 p-4 rounded-lg">
+                      {/* 登入狀態 */}
+                      <div className="mb-4">
+                        <h4 className="text-lg font-medium text-gray-300 mb-3">
+                          登入狀態
+                        </h4>
+                        {user ? (
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-3">
+                              {user.photoURL ? (
+                                <img
+                                  src={user.photoURL}
+                                  alt={user.displayName || "用戶"}
+                                  className="w-10 h-10 rounded-full"
+                                />
+                              ) : (
+                                <div className="w-10 h-10 bg-gray-600 rounded-full flex items-center justify-center">
+                                  <span className="text-gray-400 text-lg">
+                                    👤
+                                  </span>
+                                </div>
+                              )}
+                              <div>
+                                <div className="text-gray-200 font-medium">
+                                  {user.displayName || user.email}
+                                </div>
+                                <div className="text-sm text-gray-400">
+                                  {user.email}
+                                </div>
+                              </div>
+                            </div>
+
+                            <button
+                              onClick={signOut}
+                              className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors"
+                            >
+                              <span>🚪</span>
+                              登出
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center justify-between">
+                            <div className="text-gray-400">未登入</div>
+                            <button
+                              onClick={signIn}
+                              className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors"
+                            >
+                              <span>🔑</span>
+                              使用 Google 登入
+                            </button>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* 同步狀態 */}
+                      <div className="mb-4">
+                        <h4 className="text-lg font-medium text-gray-300 mb-3">
+                          同步狀態
+                        </h4>
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between">
+                            <span className="text-gray-400">網路狀態:</span>
+                            <span
+                              className={`px-2 py-1 rounded text-xs ${
+                                isOnline
+                                  ? "bg-green-600 text-white"
+                                  : "bg-red-600 text-white"
+                              }`}
+                            >
+                              {isOnline ? "在線" : "離線"}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-gray-400">最後同步:</span>
+                            <span className="text-gray-300 text-sm">
+                              {lastSyncTime
+                                ? new Date(lastSyncTime).toLocaleString("zh-TW")
+                                : "從未同步"}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-gray-400">用戶ID:</span>
+                            <span className="text-gray-300 text-xs font-mono">
+                              {user?.uid || "未登入"}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-gray-400">事件數量:</span>
+                            <span className="text-gray-300">
+                              {events.length} 個
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-gray-400">模板數量:</span>
+                            <span className="text-gray-300">
+                              {presetTemplates.length} 個
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-gray-400">本地存儲:</span>
+                            <span className="text-gray-300">
+                              {localStorage.getItem("all-timeline-events")
+                                ? "有數據"
+                                : "無數據"}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* 手動同步按鈕 */}
+                        {user && (
+                          <div className="mt-4">
+                            <button
+                              onClick={async () => {
+                                if (isSyncing || syncDisabled) return;
+                                if (!user) {
+                                  alert("請先登入後再進行同步");
+                                  return;
+                                }
+                                setIsSyncing(true);
+                                try {
+                                  const displaySettings = {
+                                    timelineFutureCount: timelineFutureCount,
+                                  };
+                                  await Promise.all([
+                                    syncEvents(events),
+                                    syncTemplates(presetTemplates),
+                                    syncDisplaySettings(displaySettings),
+                                  ]);
+                                  // 更新最後同步時間
+                                  setLastSyncTime(new Date().toISOString());
+                                  setSyncSuccess(true);
+                                  console.log("✅ 手動同步完成");
+                                } catch (error) {
+                                  console.error("同步失敗:", error);
+                                  alert("同步失敗，請檢查網路連接或稍後再試");
+                                } finally {
+                                  setIsSyncing(false);
+                                }
+                              }}
+                              disabled={!isOnline || isSyncing || syncDisabled}
+                              className={`w-full px-4 py-2 rounded-lg flex items-center justify-center gap-2 transition-colors ${
+                                syncSuccess
+                                  ? "bg-green-600 text-white"
+                                  : isOnline && !isSyncing && !syncDisabled
+                                  ? "bg-blue-600 hover:bg-blue-700 text-white"
+                                  : "bg-gray-600 text-gray-400 cursor-not-allowed"
+                              }`}
+                            >
+                              <span className={isSyncing ? "animate-spin" : ""}>
+                                {syncSuccess ? "✅" : "🔄"}
+                              </span>
+                              {syncSuccess
+                                ? "已同步至最新！"
+                                : isSyncing
+                                ? "同步中..."
+                                : syncDisabled
+                                ? "已同步至最新！"
+                                : "立即同步"}
+                            </button>
+                          </div>
+                        )}
+
+                        {/* 測試數據衝突 */}
+                        {user && (
+                          <div className="mt-4">
+                            <button
+                              onClick={async () => {
+                                try {
+                                  const {
+                                    events: cloudEvents,
+                                    templates: cloudTemplates,
+                                  } = await loadUserData();
+
+                                  const localEvents = localStorage.getItem(
+                                    "all-timeline-events"
+                                  );
+                                  const localTemplates =
+                                    localStorage.getItem("preset-templates");
+
+                                  let parsedLocalEvents: TimelineEvent[] = [];
+                                  let parsedLocalTemplates: PresetTemplate[] =
+                                    [];
+
+                                  if (localEvents) {
+                                    try {
+                                      const allLocalEvents =
+                                        JSON.parse(localEvents);
+                                      parsedLocalEvents = allLocalEvents.filter(
+                                        (event: TimelineEvent) =>
+                                          !event.id.startsWith("auto-")
+                                      );
+                                    } catch (error) {
+                                      console.error(
+                                        "解析本地事件數據失敗:",
+                                        error
+                                      );
+                                    }
+                                  }
+
+                                  if (localTemplates) {
+                                    try {
+                                      parsedLocalTemplates =
+                                        JSON.parse(localTemplates);
+                                    } catch (error) {
+                                      console.error(
+                                        "解析本地模板數據失敗:",
+                                        error
+                                      );
+                                    }
+                                  }
+
+                                  setDataChoiceInfo({
+                                    cloudEvents: cloudEvents,
+                                    cloudTemplates: cloudTemplates,
+                                    localEvents: parsedLocalEvents,
+                                    localTemplates: parsedLocalTemplates,
+                                    hasConflict: true,
+                                  });
+                                  setShowDataChoiceModal(true);
+                                  console.log("🧪 手動觸發數據衝突檢測");
+                                } catch (error) {
+                                  console.error("測試數據衝突失敗:", error);
+                                  alert("測試失敗，請檢查網路連接");
+                                }
+                              }}
+                              className="w-full bg-orange-600 hover:bg-orange-700 text-white px-4 py-2 rounded-lg flex items-center justify-center gap-2 transition-colors"
+                            >
+                              🧪 測試數據衝突
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 自訂模板管理 */}
+                  <PresetTemplateManager
+                    templates={presetTemplates}
+                    onChange={setPresetTemplates}
+                    timelineFutureCount={timelineFutureCount}
+                    setTimelineFutureCount={setTimelineFutureCount}
+                    editingTemplateId={editingTemplateId}
+                    onEditingTemplateIdChange={setEditingTemplateId}
+                  />
+
+                  {/* 添加事件表單 */}
+                  <AddEventForm
+                    onAddEvent={addEvent}
+                    editingEvent={null}
+                    onUpdateEvent={updateEvent}
+                    onCancelEdit={cancelEdit}
+                  />
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* 數據選擇對話框 */}
+        {showDataChoiceModal && dataChoiceInfo && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-dark-800 rounded-lg p-6 max-w-2xl max-h-[90vh] overflow-y-auto">
+              <div className="flex justify-between items-center mb-6">
+                <h2 className="text-2xl font-bold title-text">選擇數據來源</h2>
+                <button
+                  onClick={() => setShowDataChoiceModal(false)}
+                  className="text-gray-400 hover:text-white"
+                >
+                  ✕
+                </button>
+              </div>
+
+              <div className="space-y-6">
+                <div className="text-gray-300 mb-4">
+                  檢測到本地和雲端都有數據，請選擇要使用哪一個：
+                </div>
+                <div className="text-yellow-400 text-sm mb-4 p-3 bg-yellow-900 bg-opacity-30 rounded-lg">
+                  ⚠️
+                  注意：選擇雲端數據會清除本地數據，選擇本地數據會覆蓋雲端數據
+                </div>
+
+                {/* 雲端數據 */}
+                <div className="bg-dark-700 p-4 rounded-lg border border-blue-500">
+                  <h3 className="text-lg font-semibold text-blue-400 mb-3 flex items-center gap-2">
+                    ☁️ 雲端數據
+                  </h3>
+                  <div className="space-y-2 mb-4">
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">事件數量:</span>
+                      <span className="text-gray-300">
+                        {dataChoiceInfo.cloudEvents.length} 個
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">模板數量:</span>
+                      <span className="text-gray-300">
+                        {dataChoiceInfo.cloudTemplates.length} 個
+                      </span>
+                    </div>
+                  </div>
                   <button
                     onClick={() => {
-                      setShowModal(false);
-                      setEditingTemplateId(null);
+                      // 設置雲端數據
+                      setEvents(dataChoiceInfo.cloudEvents);
+                      setPresetTemplates(dataChoiceInfo.cloudTemplates);
+
+                      // 清除本地數據
+                      localStorage.removeItem("all-timeline-events");
+                      localStorage.removeItem("all-preset-templates");
+                      localStorage.removeItem("timeline-future-count");
+                      console.log("🗑️ 已清除本地數據");
+
+                      setShowDataChoiceModal(false);
+                      setDataChoiceInfo(null);
+                      console.log("✅ 選擇使用雲端數據");
                     }}
-                    className="text-gray-400 hover:text-white text-2xl"
+                    className="w-full bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg transition-colors"
                   >
-                    ×
+                    使用雲端數據
                   </button>
                 </div>
 
-                {/* 帳號設置 */}
-                <div className="mb-8">
-                  <h3 className="text-xl font-semibold text-gray-300 mb-4 flex items-center gap-2">
-                    <span>👤</span>
-                    帳號
+                {/* 本地數據 */}
+                <div className="bg-dark-700 p-4 rounded-lg border border-green-500">
+                  <h3 className="text-lg font-semibold text-green-400 mb-3 flex items-center gap-2">
+                    📱 本地數據
                   </h3>
-
-                  <div className="bg-dark-700 p-4 rounded-lg">
-                    {/* 登入狀態 */}
-                    <div className="mb-4">
-                      <h4 className="text-lg font-medium text-gray-300 mb-3">
-                        登入狀態
-                      </h4>
-                      {user ? (
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-3">
-                            {user.photoURL ? (
-                              <img
-                                src={user.photoURL}
-                                alt={user.displayName || "用戶"}
-                                className="w-10 h-10 rounded-full"
-                              />
-                            ) : (
-                              <div className="w-10 h-10 bg-gray-600 rounded-full flex items-center justify-center">
-                                <span className="text-gray-400 text-lg">
-                                  👤
-                                </span>
-                              </div>
-                            )}
-                            <div>
-                              <div className="text-gray-200 font-medium">
-                                {user.displayName || user.email}
-                              </div>
-                              <div className="text-sm text-gray-400">
-                                {user.email}
-                              </div>
-                            </div>
-                          </div>
-                          <button
-                            onClick={signOut}
-                            className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors"
-                          >
-                            <span>🚪</span>
-                            登出
-                          </button>
-                        </div>
-                      ) : (
-                        <div className="flex items-center justify-between">
-                          <div className="text-gray-400">未登入</div>
-                          <button
-                            onClick={signIn}
-                            className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors"
-                          >
-                            <span>🔑</span>
-                            使用 Google 登入
-                          </button>
-                        </div>
-                      )}
+                  <div className="space-y-2 mb-4">
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">事件數量:</span>
+                      <span className="text-gray-300">
+                        {dataChoiceInfo.localEvents.length} 個
+                      </span>
                     </div>
-
-                    {/* 同步狀態 */}
-                    {user && (
-                      <div>
-                        <h4 className="text-lg font-medium text-gray-300 mb-3">
-                          資料同步
-                        </h4>
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-3">
-                            <div
-                              className={`w-3 h-3 rounded-full ${
-                                isOnline ? "bg-green-400" : "bg-red-400"
-                              }`}
-                            ></div>
-                            <div>
-                              <div className="text-gray-200">
-                                {isOnline ? "線上" : "離線"}
-                              </div>
-                              <div className="text-sm text-gray-400">
-                                {lastSyncTime
-                                  ? `最後同步: ${new Date(
-                                      lastSyncTime
-                                    ).toLocaleString("zh-TW", {
-                                      year: "numeric",
-                                      month: "2-digit",
-                                      day: "2-digit",
-                                      hour: "2-digit",
-                                      minute: "2-digit",
-                                    })}`
-                                  : "尚未同步"}
-                              </div>
-                            </div>
-                          </div>
-                          <button
-                            onClick={async () => {
-                              if (isSyncing || syncDisabled) return;
-                              if (!user) {
-                                alert("請先登入後再進行同步");
-                                return;
-                              }
-                              setIsSyncing(true);
-                              try {
-                                const displaySettings = {
-                                  timelineFutureCount: timelineFutureCount,
-                                };
-                                await Promise.all([
-                                  syncEvents(events),
-                                  syncTemplates(presetTemplates),
-                                  syncDisplaySettings(displaySettings),
-                                ]);
-                                // 更新最後同步時間
-                                setLastSyncTime(new Date().toISOString());
-                                setSyncSuccess(true);
-                              } catch (error) {
-                                console.error("同步失敗:", error);
-                                alert("同步失敗，請檢查網路連接或稍後再試");
-                              } finally {
-                                setIsSyncing(false);
-                              }
-                            }}
-                            disabled={!isOnline || isSyncing || syncDisabled}
-                            className={`px-4 py-2 rounded-lg flex items-center gap-2 transition-colors ${
-                              syncSuccess
-                                ? "bg-green-600 text-white"
-                                : isOnline && !isSyncing && !syncDisabled
-                                ? "bg-blue-600 hover:bg-blue-700 text-white"
-                                : "bg-gray-600 text-gray-400 cursor-not-allowed"
-                            }`}
-                          >
-                            <span className={isSyncing ? "animate-spin" : ""}>
-                              {syncSuccess ? "✅" : "🔄"}
-                            </span>
-                            {syncSuccess
-                              ? "已同步至最新！"
-                              : isSyncing
-                              ? "同步中..."
-                              : syncDisabled
-                              ? "已同步至最新！"
-                              : "立即同步"}
-                          </button>
-                        </div>
-                      </div>
-                    )}
+                    <div className="flex justify-between">
+                      <span className="text-gray-400">模板數量:</span>
+                      <span className="text-gray-300">
+                        {dataChoiceInfo.localTemplates.length} 個
+                      </span>
+                    </div>
                   </div>
+                  <button
+                    onClick={() => {
+                      // 設置本地數據
+                      setEvents(dataChoiceInfo.localEvents);
+                      setPresetTemplates(dataChoiceInfo.localTemplates);
+
+                      // 同步本地數據到雲端（覆蓋雲端數據）
+                      if (user) {
+                        syncEvents(dataChoiceInfo.localEvents)
+                          .then(() => {
+                            console.log("✅ 本地數據已同步到雲端");
+                          })
+                          .catch((error) => {
+                            console.error("同步本地數據到雲端失敗:", error);
+                          });
+
+                        syncTemplates(dataChoiceInfo.localTemplates)
+                          .then(() => {
+                            console.log("✅ 本地模板已同步到雲端");
+                          })
+                          .catch((error) => {
+                            console.error("同步本地模板到雲端失敗:", error);
+                          });
+                      }
+
+                      setShowDataChoiceModal(false);
+                      setDataChoiceInfo(null);
+                      console.log("✅ 選擇使用本地數據");
+                    }}
+                    className="w-full bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg transition-colors"
+                  >
+                    使用本地數據
+                  </button>
                 </div>
 
-                {/* 自訂模板管理 */}
-                <PresetTemplateManager
-                  templates={presetTemplates}
-                  onChange={setPresetTemplates}
-                  timelineFutureCount={timelineFutureCount}
-                  setTimelineFutureCount={setTimelineFutureCount}
-                  editingTemplateId={editingTemplateId}
-                  onEditingTemplateIdChange={setEditingTemplateId}
-                />
+                {/* 合併數據 */}
+                <div className="bg-dark-700 p-4 rounded-lg border border-purple-500">
+                  <h3 className="text-lg font-semibold text-purple-400 mb-3 flex items-center gap-2">
+                    🔄 合併數據
+                  </h3>
+                  <div className="text-gray-300 mb-4">
+                    將本地和雲端數據合併，保留所有數據（可能會有重複）
+                  </div>
+                  <button
+                    onClick={() => {
+                      // 合併事件，去重
+                      const mergedEvents = [
+                        ...dataChoiceInfo.cloudEvents,
+                        ...dataChoiceInfo.localEvents,
+                      ];
+                      const uniqueEvents = mergedEvents.filter(
+                        (event, index, arr) =>
+                          arr.findIndex((e) => e.id === event.id) === index
+                      );
 
-                {/* 添加事件表單 */}
-                <AddEventForm
-                  onAddEvent={addEvent}
-                  editingEvent={editingEvent}
-                  onUpdateEvent={updateEvent}
-                  onCancelEdit={cancelEdit}
-                />
+                      // 合併模板，去重
+                      const mergedTemplates = [
+                        ...dataChoiceInfo.cloudTemplates,
+                        ...dataChoiceInfo.localTemplates,
+                      ];
+                      const uniqueTemplates = mergedTemplates.filter(
+                        (template, index, arr) =>
+                          arr.findIndex((t) => t.id === template.id) === index
+                      );
+
+                      // 設置合併後的數據
+                      setEvents(uniqueEvents);
+                      setPresetTemplates(uniqueTemplates);
+
+                      // 保存合併後的數據到本地
+                      localStorage.setItem(
+                        "all-timeline-events",
+                        JSON.stringify(uniqueEvents)
+                      );
+                      localStorage.setItem(
+                        "all-preset-templates",
+                        JSON.stringify(uniqueTemplates)
+                      );
+
+                      // 同步合併後的數據到雲端
+                      if (user) {
+                        syncEvents(uniqueEvents)
+                          .then(() => {
+                            console.log("✅ 合併數據已同步到雲端");
+                          })
+                          .catch((error) => {
+                            console.error("同步合併數據到雲端失敗:", error);
+                          });
+
+                        syncTemplates(uniqueTemplates)
+                          .then(() => {
+                            console.log("✅ 合併模板已同步到雲端");
+                          })
+                          .catch((error) => {
+                            console.error("同步合併模板到雲端失敗:", error);
+                          });
+                      }
+
+                      setShowDataChoiceModal(false);
+                      setDataChoiceInfo(null);
+                      console.log("✅ 選擇合併數據");
+                    }}
+                    className="w-full bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg transition-colors"
+                  >
+                    合併數據
+                  </button>
+                </div>
               </div>
             </div>
           </div>
