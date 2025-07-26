@@ -1,0 +1,76 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-dark-900 text-white;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+  }
+}
+
+@layer components {
+  .title-text {
+    @apply text-primary-400 font-bold;
+  }
+  
+  .card-border {
+    @apply border-2 border-primary-600 rounded-lg;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  }
+  
+  .timeline-item {
+    @apply relative p-4 rounded-lg bg-dark-800 border-l-4 border-accent-500;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    transition: all 0.3s ease;
+  }
+  
+  .timeline-item:hover {
+    @apply bg-dark-700;
+    transform: translateX(4px);
+  }
+  
+  .timeline-item.past-event:hover {
+    transform: none;
+  }
+  
+  .timeline-item::before {
+    content: '';
+    @apply absolute left-[-1.5px] top-1/2 w-3 h-3 rounded-full -translate-x-1/2 -translate-y-1/2;
+    background-color: var(--timeline-dot-color, #10b981); /* 預設綠色 */
+  }
+  
+  .input-style {
+    @apply bg-dark-700 border border-gray-600 text-white placeholder-gray-400 rounded-lg;
+    transition: all 0.3s ease;
+  }
+  
+  .input-style:focus {
+    @apply outline-none border-primary-500 ring-2 ring-primary-500/20;
+  }
+  
+  .btn-primary {
+    @apply px-6 py-3 bg-primary-600 text-white font-semibold rounded-lg;
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+  }
+  
+  .btn-primary:hover {
+    @apply bg-primary-700;
+    transform: translateY(-1px);
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+  }
+  
+  .btn-primary:active {
+    transform: translateY(0);
+  }
+  
+  .btn-secondary {
+    @apply px-6 py-3 bg-dark-700 border border-gray-600 text-gray-300 font-semibold rounded-lg;
+    transition: all 0.3s ease;
+  }
+  
+  .btn-secondary:hover {
+    @apply bg-dark-600 text-white;
+  }
+} 
