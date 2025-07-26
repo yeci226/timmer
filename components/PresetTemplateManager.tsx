@@ -292,48 +292,58 @@ export default function PresetTemplateManager({
                     <button
                       key={color.value}
                       type="button"
-                      onClick={() => handleColorChange(color.value)}
+                      onClick={(e) => {
+                        if (color.value === "custom") {
+                          // 創建一個隱藏的顏色選擇器
+                          const colorInput = document.createElement("input");
+                          colorInput.type = "color";
+                          colorInput.value =
+                            form.color && form.color.startsWith("#")
+                              ? form.color
+                              : customColor;
+
+                          // 設置顏色選擇器的位置在點擊位置附近
+                          const rect = (
+                            e.target as HTMLElement
+                          ).getBoundingClientRect();
+                          colorInput.style.position = "fixed";
+                          colorInput.style.left = `${rect.left}px`;
+                          colorInput.style.top = `${rect.bottom + 5}px`;
+                          colorInput.style.zIndex = "9999";
+                          colorInput.style.opacity = "0";
+                          colorInput.style.pointerEvents = "none";
+                          document.body.appendChild(colorInput);
+
+                          colorInput.addEventListener("change", (e) => {
+                            const newColor = (e.target as HTMLInputElement)
+                              .value;
+                            setCustomColor(newColor);
+                            setForm((prev) => ({ ...prev, color: newColor }));
+                            document.body.removeChild(colorInput);
+                          });
+
+                          colorInput.click();
+                        } else {
+                          handleColorChange(color.value);
+                        }
+                      }}
                       className={`flex items-center gap-2 px-3 py-2 rounded-lg border-2 transition-all ${
-                        form.color === color.value ||
                         (color.value === "custom" &&
                           form.color &&
-                          form.color.startsWith("#"))
+                          form.color.startsWith("#")) ||
+                        (color.value !== "custom" && form.color === color.value)
                           ? "border-white"
-                          : "border-gray-600 hover:border-gray-400"
+                          : "border-gray-400"
                       }`}
                     >
                       {color.value === "custom" ? (
                         <div
-                          className="w-4 h-4 rounded-full cursor-pointer flex items-center justify-center"
+                          className="w-4 h-4 rounded-full flex items-center justify-center border border-gray-400"
                           style={{
                             backgroundColor:
                               form.color && form.color.startsWith("#")
                                 ? form.color
                                 : customColor,
-                          }}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            // 創建一個隱藏的顏色選擇器
-                            const colorInput = document.createElement("input");
-                            colorInput.type = "color";
-                            colorInput.value =
-                              form.color && form.color.startsWith("#")
-                                ? form.color
-                                : customColor;
-                            colorInput.style.position = "absolute";
-                            colorInput.style.opacity = "0";
-                            colorInput.style.pointerEvents = "none";
-                            document.body.appendChild(colorInput);
-
-                            colorInput.addEventListener("change", (e) => {
-                              const newColor = (e.target as HTMLInputElement)
-                                .value;
-                              setCustomColor(newColor);
-                              setForm((prev) => ({ ...prev, color: newColor }));
-                              document.body.removeChild(colorInput);
-                            });
-
-                            colorInput.click();
                           }}
                         />
                       ) : (

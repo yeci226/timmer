@@ -81,6 +81,8 @@ export default function Home() {
     null
   );
   const [appVersion, setAppVersion] = useState<string>("0.1.0");
+  const [commits, setCommits] = useState<any[]>([]);
+  const [showCommits, setShowCommits] = useState(false);
   // 載入 localStorage
   useEffect(() => {
     const savedAllEvents = localStorage.getItem("all-timeline-events");
@@ -120,6 +122,20 @@ export default function Home() {
       }
     };
     fetchVersion();
+
+    // 獲取 GitHub commits
+    const fetchCommits = async () => {
+      try {
+        const response = await fetch("/api/github/commits");
+        if (response.ok) {
+          const commitsData = await response.json();
+          setCommits(commitsData);
+        }
+      } catch (error) {
+        console.error("獲取 commits 失敗:", error);
+      }
+    };
+    fetchCommits();
     if (savedTemplates) {
       try {
         const parsedTemplates = JSON.parse(savedTemplates);
@@ -551,9 +567,89 @@ export default function Home() {
           </div>
         )}
 
-        {/* 版本顯示 */}
-        <div className="fixed bottom-4 left-4 text-xs text-gray-500 bg-dark-800 px-2 py-1 rounded border border-gray-600">
-          v{appVersion}
+        {/* Commits Modal */}
+        {showCommits && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+            <div className="bg-dark-800 rounded-lg w-full max-w-2xl max-h-[80vh] overflow-y-auto">
+              <div className="p-6">
+                <div className="flex items-center justify-between mb-6">
+                  <h2 className="text-2xl font-bold text-primary-400 flex items-center gap-2">
+                    <span>📝</span>
+                    最近提交
+                  </h2>
+                  <button
+                    onClick={() => setShowCommits(false)}
+                    className="text-gray-400 hover:text-white text-2xl"
+                  >
+                    ×
+                  </button>
+                </div>
+
+                <div className="space-y-4">
+                  {commits.length > 0 ? (
+                    commits.map((commit, index) => (
+                      <div
+                        key={commit.sha}
+                        className="p-4 bg-dark-700 rounded-lg border border-gray-600"
+                      >
+                        <div className="flex items-start justify-between mb-2">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-gray-400 font-mono bg-gray-800 px-2 py-1 rounded">
+                              {commit.sha}
+                            </span>
+                            <span className="text-xs text-gray-500">
+                              {new Date(commit.date).toLocaleString("zh-TW", {
+                                year: "numeric",
+                                month: "2-digit",
+                                day: "2-digit",
+                                hour: "2-digit",
+                                minute: "2-digit",
+                              })}
+                            </span>
+                            <span className="text-xs text-gray-500">
+                              by {commit.author}
+                            </span>
+                          </div>
+                          <a
+                            href={commit.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-blue-400 hover:text-blue-300 text-xs"
+                          >
+                            查看 →
+                          </a>
+                        </div>
+                        <p className="text-gray-300 text-sm mb-2">
+                          {commit.message}
+                        </p>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="text-center text-gray-500 py-8">
+                      正在載入更新記錄...
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 右下角信息區域 */}
+        <div className="fixed bottom-4 right-4 flex flex-col gap-2">
+          {/* Commit 信息按鈕 */}
+          <button
+            onClick={() => setShowCommits(true)}
+            className="text-xs text-gray-400 bg-dark-800 px-2 py-1 rounded border border-gray-600 hover:text-gray-300 hover:border-gray-500 transition-colors"
+            title="查看最近更新"
+          >
+            📝 最近提交
+          </button>
+
+          {/* 版本顯示 */}
+          <div className="text-xs text-gray-500 bg-dark-800 px-2 py-1 rounded border border-gray-600 flex justify-center">
+            v{appVersion}
+          </div>
         </div>
       </div>
     </div>
